@@ -1,0 +1,1652 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="initial-scale=1,user-scalable=no,maximum-scale=1,width=device-width">
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <link rel="stylesheet" href="css/leaflet.css">
+        <link rel="stylesheet" href="css/L.Control.Layers.Tree.css">
+        <link rel="stylesheet" href="css/qgis2web.css">
+        <link rel="stylesheet" href="css/fontawesome-all.min.css">
+        <link rel="stylesheet" href="css/leaflet.photon.css">
+        <style>
+        html, body, #map {
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            margin: 0;
+        }
+        </style>
+        <title>Beyond the Route: Modelling Movements and Spatial Interactions in Lisbon’s Revolutions</title>
+    </head>
+    <body>
+        <div id="map">
+        </div>
+        <script src="js/qgis2web_expressions.js"></script>
+        <script src="js/leaflet.js"></script>
+        <script src="https://cdn.jsdelivr.net/gh/IvanSanchez/Leaflet.ImageOverlay.Rotated@gh-pages/Leaflet.ImageOverlay.Rotated.js"></script>
+        <script src="js/L.Control.Layers.Tree.min.js"></script>
+        <script src="js/multi-style-layer.js"></script>
+        <script src="js/leaflet-svg-shape-markers.min.js"></script>
+        <script src="js/leaflet.rotatedMarker.js"></script>
+        <script src="js/leaflet.pattern.js"></script>
+        <script src="js/leaflet-hash.js"></script>
+        <script src="js/Autolinker.min.js"></script>
+        <script src="js/rbush.min.js"></script>
+        <script src="js/labelgun.min.js"></script>
+        <script src="js/labels.js"></script>
+        <script src="js/leaflet.photon.js"></script>
+        <script src="data/Lugares1974_1.js"></script>
+        <script src="data/Percursos1974_2.js"></script>
+        <script src="data/Interaes1974_3.js"></script>
+        <script src="data/Marcos1974_4.js"></script>
+        <script src="data/Lugares1910_5.js"></script>
+        <script src="data/Percursos1910_6.js"></script>
+        <script src="data/Interaes1910_7.js"></script>
+        <script src="data/Marcos1910_8.js"></script>
+        <script>
+        var map = L.map('map', {
+            zoomControl:false, maxZoom:18, minZoom:11
+        }).fitBounds([[38.696586740374805,-9.15643808490227],[38.718001198129386,-9.126009449059245]]);
+        var hash = new L.Hash(map);
+        map.attributionControl.setPrefix('<a href="https://github.com/qgis2web/qgis2web" target="_blank">qgis2web</a> &middot; <a href="https://leafletjs.com" title="A JS library for interactive maps">Leaflet</a> &middot; <a href="https://qgis.org">QGIS</a>');
+        var autolinker = new Autolinker({truncate: {length: 30, location: 'smart'}});
+        // remove popup's row if "visible-with-data"
+        function removeEmptyRowsFromPopupContent(content, feature) {
+         var tempDiv = document.createElement('div');
+         tempDiv.innerHTML = content;
+         var rows = tempDiv.querySelectorAll('tr');
+         for (var i = 0; i < rows.length; i++) {
+             var td = rows[i].querySelector('td.visible-with-data');
+             var key = td ? td.id : '';
+             if (td && td.classList.contains('visible-with-data') && feature.properties[key] == null) {
+                 rows[i].parentNode.removeChild(rows[i]);
+             }
+         }
+         return tempDiv.innerHTML;
+        }
+        // modify popup if contains media
+        function addClassToPopupIfMedia(content, popup) {
+            var tempDiv = document.createElement('div');
+            tempDiv.innerHTML = content;
+            var imgTd = tempDiv.querySelector('td img');
+            if (imgTd) {
+                var src = imgTd.getAttribute('src');
+                if (/\.(jpg|jpeg|png|gif|bmp|webp|avif)$/i.test(src)) {
+                    popup._contentNode.classList.add('media');
+                    var img = popup._contentNode.querySelector('td img');
+                    if (img) {
+                        // If already loaded (cache), update immediately
+                        if (img.complete && img.naturalHeight > 0) {
+                            popup.update();
+                        } else {
+                            img.addEventListener('load', function() {
+                                popup.update();
+                            });
+                            img.addEventListener('error', function() {
+                                popup.update();
+                            });
+                        }
+                    }
+                } else if (/\.(mp3|wav|ogg|aac)$/i.test(src)) {
+                    var audio = document.createElement('audio');
+                    audio.controls = true;
+                    audio.src = src;
+                    imgTd.parentNode.replaceChild(audio, imgTd);
+                    popup._contentNode.classList.add('media');
+                    setTimeout(function() {
+                        popup.setContent(tempDiv.innerHTML);
+                        popup.update();
+                    }, 10);
+                } else if (/\.(mp4|webm|ogg|mov)$/i.test(src)) {
+                    var video = document.createElement('video');
+                    video.controls = true;
+                    video.src = src;
+                    video.style.width = "400px";
+                    video.style.height = "300px";
+                    video.style.maxHeight = "60vh";
+                    video.style.maxWidth = "60vw";
+                    imgTd.parentNode.replaceChild(video, imgTd);
+                    popup._contentNode.classList.add('media');
+                    // Aggiorna il popup quando il video carica i metadati
+                    video.addEventListener('loadedmetadata', function() {
+                        popup.update();
+                    });
+                    setTimeout(function() {
+                        popup.setContent(tempDiv.innerHTML);
+                        popup.update();
+                    }, 10);
+                } else {
+                    popup._contentNode.classList.remove('media');
+                }
+            } else {
+                popup._contentNode.classList.remove('media');
+            }
+        }
+        var title = new L.Control({'position':'topleft'});
+        title.onAdd = function (map) {
+            this._div = L.DomUtil.create('div', 'info');
+            this.update();
+            return this._div;
+        };
+        title.update = function () {
+            this._div.innerHTML = '<h2>Beyond the Route: Modelling Movements and Spatial Interactions in Lisbon’s Revolutions</h2>';
+        };
+        title.addTo(map);
+        var zoomControl = L.control.zoom({
+            position: 'topleft'
+        }).addTo(map);
+        var bounds_group = new L.featureGroup([]);
+        function setBounds() {
+        }
+        map.createPane('pane_ESRIGraylight_0');
+        map.getPane('pane_ESRIGraylight_0').style.zIndex = 400;
+        var layer_ESRIGraylight_0 = L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+            pane: 'pane_ESRIGraylight_0',
+            opacity: 1.0,
+            attribution: '',
+            minZoom: 11,
+            maxZoom: 18,
+            minNativeZoom: 0,
+            maxNativeZoom: 20
+        });
+        layer_ESRIGraylight_0;
+        map.addLayer(layer_ESRIGraylight_0);
+        function pop_Lugares1974_1(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <td class="visible-with-data" id="lugar" colspan="2"><strong>Nome do lugar</strong><br />' + (feature.properties['lugar'] !== null ? autolinker.link(String(feature.properties['lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Categoria</th>\
+                        <td class="visible-with-data" id="tipo_lugar">' + (feature.properties['tipo_lugar'] !== null ? autolinker.link(String(feature.properties['tipo_lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Contexto histórico</th>\
+                        <td class="visible-with-data" id="descricao_publica">' + (feature.properties['descricao_publica'] !== null ? autolinker.link(String(feature.properties['descricao_publica']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_Lugares1974_1_0(feature) {
+            switch(String(feature.properties['tipo_lugar'])) {
+                case 'area':
+                    return {
+                pane: 'pane_Lugares1974_1',
+                radius: 6.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'cruzamento_aproximado':
+                    return {
+                pane: 'pane_Lugares1974_1',
+                shape: 'diamond',
+                radius: 5.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '5.0,1.0',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'edificio':
+                    return {
+                pane: 'pane_Lugares1974_1',
+                shape: 'square',
+                radius: 6.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'monumento':
+                    return {
+                pane: 'pane_Lugares1974_1',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(70,90,104,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'rua':
+                    return {
+                pane: 'pane_Lugares1974_1',
+                shape: 'diamond',
+                radius: 5.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'Rua':
+                    return {
+                pane: 'pane_Lugares1974_1',
+                shape: 'diamond',
+                radius: 5.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                default:
+                    return {
+                pane: 'pane_Lugares1974_1',
+                radius: 4.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(200,78,90,1.0)',
+                interactive: true,
+            }
+                    break;
+            }
+        }
+        map.createPane('pane_Lugares1974_1');
+        map.getPane('pane_Lugares1974_1').style.zIndex = 401;
+        map.getPane('pane_Lugares1974_1').style['mix-blend-mode'] = 'normal';
+        var layer_Lugares1974_1 = new L.geoJson(json_Lugares1974_1, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Lugares1974_1',
+            layerName: 'layer_Lugares1974_1',
+            pane: 'pane_Lugares1974_1',
+            onEachFeature: pop_Lugares1974_1,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.circleMarker(latlng, style_Lugares1974_1_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_Lugares1974_1);
+        map.addLayer(layer_Lugares1974_1);
+        function pop_Percursos1974_2(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Grau de certeza do percurso</th>\
+                        <td class="visible-with-data" id="estatuto">' + (feature.properties['estatuto'] !== null ? autolinker.link(String(feature.properties['estatuto']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td colspan="2"><strong>Descrição do segmento</strong><br />' + (feature.properties['observacoes'] !== null ? autolinker.link(String(feature.properties['observacoes']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Início</th>\
+                        <td class="visible-with-data" id="inicio_dt">' + (feature.properties['inicio_dt'] !== null ? autolinker.link(String(feature.properties['inicio_dt']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Fim</th>\
+                        <td class="visible-with-data" id="fim_dt">' + (feature.properties['fim_dt'] !== null ? autolinker.link(String(feature.properties['fim_dt']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+        function style_Percursos1974_2_0(feature) {
+            var context = {
+                feature: feature,
+                variables: {}
+            };
+            // Start of if blocks and style check logic
+            if (exp_Percursos1974_2rule0_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule1_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule2_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule3_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule4_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule5_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule6_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule7_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule8_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+            else {
+                return {fill: false, stroke: false};
+            }
+        }
+        function style_Percursos1974_2_1(feature) {
+            var context = {
+                feature: feature,
+                variables: {}
+            };
+            // Start of if blocks and style check logic
+            if (exp_Percursos1974_2rule0_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(23,107,128,1.0)',
+                dashArray: '8.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule1_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(23,107,128,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule2_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(23,107,128,1.0)',
+                dashArray: '2.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule3_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(150,63,86,1.0)',
+                dashArray: '8.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule4_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(150,63,86,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule5_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(150,63,86,1.0)',
+                dashArray: '2.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule6_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(71,142,124,1.0)',
+                dashArray: '8.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule7_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(71,142,124,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1974_2rule8_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1974_2',
+                opacity: 1,
+                color: 'rgba(71,142,124,1.0)',
+                dashArray: '2.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+            else {
+                return {fill: false, stroke: false};
+            }
+        }
+        map.createPane('pane_Percursos1974_2');
+        map.getPane('pane_Percursos1974_2').style.zIndex = 402;
+        map.getPane('pane_Percursos1974_2').style['mix-blend-mode'] = 'normal';
+        var layer_Percursos1974_2 = new L.geoJson.multiStyle(json_Percursos1974_2, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Percursos1974_2',
+            layerName: 'layer_Percursos1974_2',
+            pane: 'pane_Percursos1974_2',
+            onEachFeature: pop_Percursos1974_2,
+            styles: [style_Percursos1974_2_0,style_Percursos1974_2_1,]
+        });
+        bounds_group.addLayer(layer_Percursos1974_2);
+        map.addLayer(layer_Percursos1974_2);
+        function pop_Interaes1974_3(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Primeiro interveniente</th>\
+                        <td class="visible-with-data" id="ator_1">' + (feature.properties['ator_1'] !== null ? autolinker.link(String(feature.properties['ator_1']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Segundo interveniente</th>\
+                        <td class="visible-with-data" id="ator_2">' + (feature.properties['ator_2'] !== null ? autolinker.link(String(feature.properties['ator_2']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Local</th>\
+                        <td class="visible-with-data" id="lugar">' + (feature.properties['lugar'] !== null ? autolinker.link(String(feature.properties['lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Período contextualizado</th>\
+                        <td class="visible-with-data" id="periodo_texto">' + (feature.properties['periodo_texto'] !== null ? autolinker.link(String(feature.properties['periodo_texto']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Precisão temporal</th>\
+                        <td class="visible-with-data" id="tipo_hora">' + (feature.properties['tipo_hora'] !== null ? autolinker.link(String(feature.properties['tipo_hora']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td class="visible-with-data" id="descricao" colspan="2"><strong>Descrição</strong><br />' + (feature.properties['descricao'] !== null ? autolinker.link(String(feature.properties['descricao']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Fontes</th>\
+                        <td class="visible-with-data" id="fontes_titulos">' + (feature.properties['fontes_titulos'] !== null ? autolinker.link(String(feature.properties['fontes_titulos']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_Interaes1974_3_0(feature) {
+            switch(String(feature.properties['tipo_interacao'])) {
+                case 'adesao_individual':
+                    return {
+                pane: 'pane_Interaes1974_3',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(71,142,124,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'cerco':
+                    return {
+                pane: 'pane_Interaes1974_3',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(120,84,160,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'intercecao_e_acompanhamento':
+                    return {
+                pane: 'pane_Interaes1974_3',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(161,138,189,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'negociacao':
+                    return {
+                pane: 'pane_Interaes1974_3',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'negociacao_sem_acordo':
+                    return {
+                pane: 'pane_Interaes1974_3',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(150,63,86,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'rendicao':
+                    return {
+                pane: 'pane_Interaes1974_3',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                default:
+                    return {
+                pane: 'pane_Interaes1974_3',
+                radius: 4.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(224,171,122,1.0)',
+                interactive: true,
+            }
+                    break;
+            }
+        }
+        map.createPane('pane_Interaes1974_3');
+        map.getPane('pane_Interaes1974_3').style.zIndex = 403;
+        map.getPane('pane_Interaes1974_3').style['mix-blend-mode'] = 'normal';
+        var layer_Interaes1974_3 = new L.geoJson(json_Interaes1974_3, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Interaes1974_3',
+            layerName: 'layer_Interaes1974_3',
+            pane: 'pane_Interaes1974_3',
+            onEachFeature: pop_Interaes1974_3,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.circleMarker(latlng, style_Interaes1974_3_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_Interaes1974_3);
+        map.addLayer(layer_Interaes1974_3);
+        function pop_Marcos1974_4(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Interveniente</th>\
+                        <td class="visible-with-data" id="ator">' + (feature.properties['ator'] !== null ? autolinker.link(String(feature.properties['ator']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Lugar</th>\
+                        <td class="visible-with-data" id="lugar">' + (feature.properties['lugar'] !== null ? autolinker.link(String(feature.properties['lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Data</th>\
+                        <td class="visible-with-data" id="data">' + (feature.properties['data'] !== null ? autolinker.link(String(feature.properties['data']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Hora</th>\
+                        <td class="visible-with-data" id="hora">' + (feature.properties['hora'] !== null ? autolinker.link(String(feature.properties['hora']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Precisão temporal</th>\
+                        <td class="visible-with-data" id="tipo_hora">' + (feature.properties['tipo_hora'] !== null ? autolinker.link(String(feature.properties['tipo_hora']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Tipo de acontecimento</th>\
+                        <td class="visible-with-data" id="tipo_acontecimento">' + (feature.properties['tipo_acontecimento'] !== null ? autolinker.link(String(feature.properties['tipo_acontecimento']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td class="visible-with-data" id="descricao" colspan="2"><strong>Descrição</strong><br />' + (feature.properties['descricao'] !== null ? autolinker.link(String(feature.properties['descricao']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">fontes_titulos</th>\
+                        <td class="visible-with-data" id="fontes_titulos">' + (feature.properties['fontes_titulos'] !== null ? autolinker.link(String(feature.properties['fontes_titulos']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+        function style_Marcos1974_4_0(feature) {
+            var context = {
+                feature: feature,
+                variables: {}
+            };
+            // Start of if blocks and style check logic
+            if (exp_Marcos1974_4rule1_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1974_4',
+                shape: 'triangle',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(23,107,128,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1974_4rule2_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1974_4',
+                shape: 'triangle',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(150,63,86,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1974_4rule3_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1974_4',
+                shape: 'triangle',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(71,142,124,1.0)',
+                interactive: true,
+            };
+                }
+            else {
+                return {
+                pane: 'pane_Marcos1974_4',
+                shape: 'triangle',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(178,223,138,1.0)',
+                interactive: true,
+            };
+            }
+        }
+        map.createPane('pane_Marcos1974_4');
+        map.getPane('pane_Marcos1974_4').style.zIndex = 404;
+        map.getPane('pane_Marcos1974_4').style['mix-blend-mode'] = 'normal';
+        var layer_Marcos1974_4 = new L.geoJson(json_Marcos1974_4, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Marcos1974_4',
+            layerName: 'layer_Marcos1974_4',
+            pane: 'pane_Marcos1974_4',
+            onEachFeature: pop_Marcos1974_4,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.shapeMarker(latlng, style_Marcos1974_4_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_Marcos1974_4);
+        map.addLayer(layer_Marcos1974_4);
+        function pop_Lugares1910_5(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <td class="visible-with-data" id="lugar" colspan="2"><strong>Nome do lugar</strong><br />' + (feature.properties['lugar'] !== null ? autolinker.link(String(feature.properties['lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Categoria</th>\
+                        <td class="visible-with-data" id="tipo_lugar">' + (feature.properties['tipo_lugar'] !== null ? autolinker.link(String(feature.properties['tipo_lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Contexto histórico</th>\
+                        <td class="visible-with-data" id="descricao_publica">' + (feature.properties['descricao_publica'] !== null ? autolinker.link(String(feature.properties['descricao_publica']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_Lugares1910_5_0(feature) {
+            switch(String(feature.properties['tipo_lugar'])) {
+                case 'area':
+                    return {
+                pane: 'pane_Lugares1910_5',
+                radius: 6.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'area_quartel':
+                    return {
+                pane: 'pane_Lugares1910_5',
+                shape: 'square',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(70,90,104,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'edificio':
+                    return {
+                pane: 'pane_Lugares1910_5',
+                shape: 'square',
+                radius: 6.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'edificio_historico':
+                    return {
+                pane: 'pane_Lugares1910_5',
+                shape: 'square',
+                radius: 6.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'passagem':
+                    return {
+                pane: 'pane_Lugares1910_5',
+                shape: 'diamond',
+                radius: 5.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'via':
+                    return {
+                pane: 'pane_Lugares1910_5',
+                shape: 'diamond',
+                radius: 5.0,
+                opacity: 1,
+                color: 'rgba(70,90,104,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                default:
+                    return {
+                pane: 'pane_Lugares1910_5',
+                radius: 6.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(70,90,104,1.0)',
+                interactive: true,
+            }
+                    break;
+            }
+        }
+        map.createPane('pane_Lugares1910_5');
+        map.getPane('pane_Lugares1910_5').style.zIndex = 405;
+        map.getPane('pane_Lugares1910_5').style['mix-blend-mode'] = 'normal';
+        var layer_Lugares1910_5 = new L.geoJson(json_Lugares1910_5, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Lugares1910_5',
+            layerName: 'layer_Lugares1910_5',
+            pane: 'pane_Lugares1910_5',
+            onEachFeature: pop_Lugares1910_5,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.circleMarker(latlng, style_Lugares1910_5_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_Lugares1910_5);
+        map.addLayer(layer_Lugares1910_5);
+        function pop_Percursos1910_6(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Grau de certeza do percurso</th>\
+                        <td class="visible-with-data" id="estatuto">' + (feature.properties['estatuto'] !== null ? autolinker.link(String(feature.properties['estatuto']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td class="visible-with-data" id="observacoes" colspan="2"><strong>Descrição do segmento</strong><br />' + (feature.properties['observacoes'] !== null ? autolinker.link(String(feature.properties['observacoes']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Início</th>\
+                        <td class="visible-with-data" id="inicio_dt">' + (feature.properties['inicio_dt'] !== null ? autolinker.link(String(feature.properties['inicio_dt']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Fim</th>\
+                        <td class="visible-with-data" id="fim_dt">' + (feature.properties['fim_dt'] !== null ? autolinker.link(String(feature.properties['fim_dt']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Alinhamento</th>\
+                        <td class="visible-with-data" id="Alinhamento">' + (feature.properties['Alinhamento'] !== null ? autolinker.link(String(feature.properties['Alinhamento']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+        function style_Percursos1910_6_0(feature) {
+            var context = {
+                feature: feature,
+                variables: {}
+            };
+            // Start of if blocks and style check logic
+            if (exp_Percursos1910_6rule0_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '20.0,10.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule1_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule2_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule3_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule4_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule5_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 5.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+            else {
+                return {fill: false, stroke: false};
+            }
+        }
+        function style_Percursos1910_6_1(feature) {
+            var context = {
+                feature: feature,
+                variables: {}
+            };
+            // Start of if blocks and style check logic
+            if (exp_Percursos1910_6rule0_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 1.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule1_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(150,63,86,1.0)',
+                dashArray: '8.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule2_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(23,107,128,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule3_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(150,63,86,1.0)',
+                dashArray: '',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule4_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(150,63,86,1.0)',
+                dashArray: '2.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+                else if (exp_Percursos1910_6rule5_eval_expression(context)) {
+                  return {
+                pane: 'pane_Percursos1910_6',
+                opacity: 1,
+                color: 'rgba(23,107,128,1.0)',
+                dashArray: '2.0,4.0',
+                lineCap: 'square',
+                lineJoin: 'bevel',
+                weight: 2.0,
+                fillOpacity: 0,
+                interactive: true,
+            };
+                }
+            else {
+                return {fill: false, stroke: false};
+            }
+        }
+        map.createPane('pane_Percursos1910_6');
+        map.getPane('pane_Percursos1910_6').style.zIndex = 406;
+        map.getPane('pane_Percursos1910_6').style['mix-blend-mode'] = 'normal';
+        var layer_Percursos1910_6 = new L.geoJson.multiStyle(json_Percursos1910_6, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Percursos1910_6',
+            layerName: 'layer_Percursos1910_6',
+            pane: 'pane_Percursos1910_6',
+            onEachFeature: pop_Percursos1910_6,
+            styles: [style_Percursos1910_6_0,style_Percursos1910_6_1,]
+        });
+        bounds_group.addLayer(layer_Percursos1910_6);
+        map.addLayer(layer_Percursos1910_6);
+        function pop_Interaes1910_7(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Primeiro interveniente</th>\
+                        <td class="visible-with-data" id="ator_1">' + (feature.properties['ator_1'] !== null ? autolinker.link(String(feature.properties['ator_1']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Segundo interveniente</th>\
+                        <td class="visible-with-data" id="ator_2">' + (feature.properties['ator_2'] !== null ? autolinker.link(String(feature.properties['ator_2']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Local</th>\
+                        <td class="visible-with-data" id="lugar">' + (feature.properties['lugar'] !== null ? autolinker.link(String(feature.properties['lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Precisão temporal</th>\
+                        <td class="visible-with-data" id="tipo_hora">' + (feature.properties['tipo_hora'] !== null ? autolinker.link(String(feature.properties['tipo_hora']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Natureza da interação</th>\
+                        <td class="visible-with-data" id="tipo_interacao">' + (feature.properties['tipo_interacao'] !== null ? autolinker.link(String(feature.properties['tipo_interacao']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td class="visible-with-data" id="descricao" colspan="2"><strong>Descrição</strong><br />' + (feature.properties['descricao'] !== null ? autolinker.link(String(feature.properties['descricao']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Fontes</th>\
+                        <td class="visible-with-data" id="fontes_titulos">' + (feature.properties['fontes_titulos'] !== null ? autolinker.link(String(feature.properties['fontes_titulos']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+
+        function style_Interaes1910_7_0(feature) {
+            switch(String(feature.properties['tipo_interacao'])) {
+                case 'oposicao':
+                    return {
+                pane: 'pane_Interaes1910_7',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(120,84,160,1.0)',
+                interactive: true,
+            }
+                    break;
+                case 'rendicao_retirada':
+                    return {
+                pane: 'pane_Interaes1910_7',
+                shape: 'diamond',
+                radius: 9.0,
+                opacity: 1,
+                color: 'rgba(120,84,160,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(247,243,232,1.0)',
+                interactive: true,
+            }
+                    break;
+                default:
+                    return {
+                pane: 'pane_Interaes1910_7',
+                radius: 4.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(207,189,106,1.0)',
+                interactive: true,
+            }
+                    break;
+            }
+        }
+        map.createPane('pane_Interaes1910_7');
+        map.getPane('pane_Interaes1910_7').style.zIndex = 407;
+        map.getPane('pane_Interaes1910_7').style['mix-blend-mode'] = 'normal';
+        var layer_Interaes1910_7 = new L.geoJson(json_Interaes1910_7, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Interaes1910_7',
+            layerName: 'layer_Interaes1910_7',
+            pane: 'pane_Interaes1910_7',
+            onEachFeature: pop_Interaes1910_7,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.circleMarker(latlng, style_Interaes1910_7_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_Interaes1910_7);
+        map.addLayer(layer_Interaes1910_7);
+        function pop_Marcos1910_8(feature, layer) {
+            var popupContent = '<table>\
+                    <tr>\
+                        <th scope="row">Interveniente</th>\
+                        <td class="visible-with-data" id="ator">' + (feature.properties['ator'] !== null ? autolinker.link(String(feature.properties['ator']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Local</th>\
+                        <td class="visible-with-data" id="lugar">' + (feature.properties['lugar'] !== null ? autolinker.link(String(feature.properties['lugar']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Data</th>\
+                        <td class="visible-with-data" id="data">' + (feature.properties['data'] !== null ? autolinker.link(String(feature.properties['data']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Hora</th>\
+                        <td class="visible-with-data" id="hora">' + (feature.properties['hora'] !== null ? autolinker.link(String(feature.properties['hora']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">Precisão temporal</th>\
+                        <td class="visible-with-data" id="tipo_hora">' + (feature.properties['tipo_hora'] !== null ? autolinker.link(String(feature.properties['tipo_hora']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <td colspan="2"><strong>Descrição</strong><br />' + (feature.properties['descricao'] !== null ? autolinker.link(String(feature.properties['descricao']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                    <tr>\
+                        <th scope="row">fontes_titulos</th>\
+                        <td class="visible-with-data" id="fontes_titulos">' + (feature.properties['fontes_titulos'] !== null ? autolinker.link(String(feature.properties['fontes_titulos']).replace(/'/g, '\'').toLocaleString()) : '') + '</td>\
+                    </tr>\
+                </table>';
+            var content = removeEmptyRowsFromPopupContent(popupContent, feature);
+			layer.on('popupopen', function(e) {
+				addClassToPopupIfMedia(content, e.popup);
+			});
+			layer.bindPopup(content, { maxHeight: 400 });
+        }
+        function style_Marcos1910_8_0(feature) {
+            var context = {
+                feature: feature,
+                variables: {}
+            };
+            // Start of if blocks and style check logic
+            if (exp_Marcos1910_8rule0_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(23,107,128,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule1_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                shape: 'triangle',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,0.9019607843137255)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(23,107,128,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule2_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                shape: 'triangle',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,0.9019607843137255)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(150,63,86,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule4_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                shape: 'square',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(23,107,128,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule5_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                shape: 'square',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(150,63,86,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule6_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                radius: 8.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(23,107,128,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule7_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                radius: 8.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(150,63,86,1.0)',
+                interactive: true,
+            };
+                }
+                else if (exp_Marcos1910_8rule8_eval_expression(context)) {
+                  return {
+                pane: 'pane_Marcos1910_8',
+                radius: 7.0,
+                opacity: 1,
+                color: 'rgba(247,243,232,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 2.0,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(150,63,86,1.0)',
+                interactive: true,
+            };
+                }
+            else {
+                return {
+                pane: 'pane_Marcos1910_8',
+                radius: 4.0,
+                opacity: 1,
+                color: 'rgba(35,35,35,1.0)',
+                dashArray: '',
+                lineCap: 'butt',
+                lineJoin: 'miter',
+                weight: 1,
+                fill: true,
+                fillOpacity: 1,
+                fillColor: 'rgba(105,105,105,1.0)',
+                interactive: true,
+            };
+            }
+        }
+        map.createPane('pane_Marcos1910_8');
+        map.getPane('pane_Marcos1910_8').style.zIndex = 408;
+        map.getPane('pane_Marcos1910_8').style['mix-blend-mode'] = 'normal';
+        var layer_Marcos1910_8 = new L.geoJson(json_Marcos1910_8, {
+            attribution: '',
+            interactive: true,
+            dataVar: 'json_Marcos1910_8',
+            layerName: 'layer_Marcos1910_8',
+            pane: 'pane_Marcos1910_8',
+            onEachFeature: pop_Marcos1910_8,
+            pointToLayer: function (feature, latlng) {
+                var context = {
+                    feature: feature,
+                    variables: {}
+                };
+                return L.circleMarker(latlng, style_Marcos1910_8_0(feature));
+            },
+        });
+        bounds_group.addLayer(layer_Marcos1910_8);
+        map.addLayer(layer_Marcos1910_8);
+        var overlaysTree = [
+        {label: '<b>1910 - Implantação da República</b>', collapsed: true, selectAllCheckbox: true, children: [
+            {label: 'Marcos 1910<br /><table><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_RepublicanosPresençaeconcentração0.png" /></td><td>Republicanos — Presença e concentração</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_RepublicanosMovimento1.png" /></td><td>Republicanos — Movimento</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_MonarquicosMovimento2.png" /></td><td>Monarquicos — Movimento</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_Outrosacontecimentosporclassificar3.png" /></td><td>Outros acontecimentos — por classificar</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_RepublicanosConfrontoeretirada4.png" /></td><td>Republicanos — Confronto e retirada</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_MonarquicosConfrontoeretirada5.png" /></td><td>Monarquicos — Confronto e retirada</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_RepublicanosAcontecimentosingular6.png" /></td><td>Republicanos — Acontecimento singular</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_MonarquicosAcontecimentosingular7.png" /></td><td>Monarquicos — Acontecimento singular</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1910_8_MonarquicosPresençaeconcentração8.png" /></td><td>Monarquicos — Presença e concentração</td></tr></table>', layer: layer_Marcos1910_8},
+            {label: 'Interações 1910<br /><table><tr><td style="text-align: center;"><img src="legend/Interaes1910_7_oposicao0.png" /></td><td>oposicao</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1910_7_rendicaoretirada1.png" /></td><td>rendicao_retirada</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1910_7_2.png" /></td><td></td></tr></table>', layer: layer_Interaes1910_7},
+            {label: 'Percursos 1910<br /><table><tr><td style="text-align: center;"><img src="legend/Percursos1910_6_RepublicanosPercursoaproximado0.png" /></td><td>Republicanos — Percurso aproximado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1910_6_MonárquicoPercursoaproximado1.png" /></td><td>Monárquico — Percurso aproximado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1910_6_RepublicanosDocumentado2.png" /></td><td>Republicanos — Documentado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1910_6_MonárquicosDocumentado3.png" /></td><td>Monárquicos — Documentado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1910_6_MonárquicosEstimado4.png" /></td><td>Monárquicos — Estimado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1910_6_RepublicanosMonárquicos5.png" /></td><td>Republicanos — Monárquicos</td></tr></table>', layer: layer_Percursos1910_6},
+            {label: 'Lugares 1910<br /><table><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_area0.png" /></td><td>area</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_areaquartel1.png" /></td><td>area_quartel</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_edificio2.png" /></td><td>edificio</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_edificiohistorico3.png" /></td><td>edificio_historico</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_passagem4.png" /></td><td>passagem</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_via5.png" /></td><td>via</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1910_5_6.png" /></td><td></td></tr></table>', layer: layer_Lugares1910_5},]},
+        {label: '<b>1974 - Revolução dos Cravos</b>', collapsed: true, selectAllCheckbox: true, children: [
+            {label: 'Marcos 1974<br /><table><tr><td style="text-align: center;"><img src="legend/Marcos1974_4_0.png" /></td><td></td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1974_4_MFAMovimento1.png" /></td><td>MFA — Movimento</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1974_4_ForçasgovernamentaisMovimento2.png" /></td><td>Forças governamentais — Movimento</td></tr><tr><td style="text-align: center;"><img src="legend/Marcos1974_4_AdesãoaoMFAMovimento3.png" /></td><td>Adesão ao MFA — Movimento</td></tr></table>', layer: layer_Marcos1974_4},
+            {label: 'Interações 1974<br /><table><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_adesaoindividual0.png" /></td><td>adesao_individual</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_cerco1.png" /></td><td>cerco</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_intercecaoeacompanhamento2.png" /></td><td>intercecao_e_acompanhamento</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_negociacao3.png" /></td><td>negociacao</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_negociacaosemacordo4.png" /></td><td>negociacao_sem_acordo</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_rendicao5.png" /></td><td>rendicao</td></tr><tr><td style="text-align: center;"><img src="legend/Interaes1974_3_6.png" /></td><td></td></tr></table>', layer: layer_Interaes1974_3},
+            {label: 'Percursos 1974<br /><table><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_MFAaproximado0.png" /></td><td>MFA - aproximado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_MFAexato1.png" /></td><td>MFA - exato</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_MFAestimado2.png" /></td><td>MFA - estimado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_Governamentalaproximado3.png" /></td><td>Governamental - aproximado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_Governamentalexato4.png" /></td><td>Governamental - exato</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_Governamentalestimado5.png" /></td><td>Governamental - estimado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_Tropasaderentesaproximado6.png" /></td><td>Tropas aderentes - aproximado</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_Tropasaderentesexato7.png" /></td><td>Tropas aderentes - exato</td></tr><tr><td style="text-align: center;"><img src="legend/Percursos1974_2_Tropasaderentesestimado8.png" /></td><td>Tropas aderentes - estimado</td></tr></table>', layer: layer_Percursos1974_2},
+            {label: 'Lugares 1974<br /><table><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_area0.png" /></td><td>area</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_cruzamentoaproximado1.png" /></td><td>cruzamento_aproximado</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_edificio2.png" /></td><td>edificio</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_monumento3.png" /></td><td>monumento</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_rua4.png" /></td><td>rua</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_Rua5.png" /></td><td>Rua</td></tr><tr><td style="text-align: center;"><img src="legend/Lugares1974_1_6.png" /></td><td></td></tr></table>', layer: layer_Lugares1974_1},]},
+            {label: "ESRI Gray (light)", layer: layer_ESRIGraylight_0, radioGroup: 'bm' },]
+        var lay = L.control.layers.tree(null, overlaysTree,{
+            //namedToggle: true,
+            //selectorBack: false,
+            //closedSymbol: '&#8862; &#x1f5c0;',
+            //openedSymbol: '&#8863; &#x1f5c1;',
+            //collapseAll: 'Collapse all',
+            //expandAll: 'Expand all',
+            collapsed: true,
+        });
+        lay.addTo(map);
+        setBounds();
+        </script> 
+        <script src="js/cartografia.js"></script>       
+    </body>
+</html>
